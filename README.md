@@ -57,17 +57,34 @@ The browser window will be visible but audio will work. You can minimize it manu
 
 ### Ubuntu/Linux Server (With Audio)
 
-For audio support on Linux, use the helper script or xvfb:
+**Important**: On a server, audio plays on the server but you can't hear it directly through SSH. You have two options:
+
+#### Option 1: Record Audio (Recommended)
 
 ```bash
-# Option 1: Use helper script (recommended)
+# Terminal 1: Start the assistant
 chmod +x run_with_audio.sh
 ./run_with_audio.sh
 
-# Option 2: Manual xvfb
-sudo apt install xvfb pulseaudio
-xvfb-run -a python talk.py
+# Terminal 2 (in another SSH session): Record audio
+chmod +x record_audio.sh
+./record_audio.sh
+# Or manually:
+parecord --file-format=wav voice_output.wav
+
+# Download the file to listen:
+# From your local machine:
+scp ubuntu@your-server:~/somethingds/voice_output.wav .
 ```
+
+#### Option 2: Use Helper Script
+
+```bash
+chmod +x run_with_audio.sh
+./run_with_audio.sh
+```
+
+The script sets up PulseAudio and xvfb. Audio will play on the server's virtual audio device.
 
 ### Command-line options
 

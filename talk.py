@@ -41,8 +41,9 @@ class VoiceAssistant:
                 self.headless = False  # Visible mode for audio on Windows
                 self.minimize_window = minimize_window
             else:
-                # On Linux, check if we should use headless or visible
-                self.headless = True
+                # On Linux, use visible mode with xvfb for audio support
+                # xvfb provides a virtual display, so we can use visible mode
+                self.headless = False  # Use visible mode with xvfb for audio
                 self.minimize_window = False
         else:
             self.headless = headless
@@ -76,8 +77,12 @@ class VoiceAssistant:
         if not self.headless and IS_WINDOWS:
             # Use real audio devices on Windows
             pass
+        elif IS_LINUX and not self.headless:
+            # On Linux with visible mode (xvfb), try to use real audio
+            # Don't use fake devices so audio can work
+            pass
         else:
-            # Use fake devices for headless or Linux
+            # Use fake devices for headless mode
             browser_args.append('--use-fake-device-for-media-stream')
         
         # Launch browser
