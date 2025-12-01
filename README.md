@@ -55,36 +55,42 @@ python talk.py
 
 The browser window will be visible but audio will work. You can minimize it manually if needed.
 
-### Ubuntu/Linux Server (With Audio)
+### Ubuntu/Linux Server (With Audio) - GUARANTEED SOLUTION
 
-**Important**: On a server, audio plays on the server but you can't hear it directly through SSH. You have two options:
-
-#### Option 1: Record Audio (Recommended)
+**For guaranteed audio recording on Ubuntu server, use this method:**
 
 ```bash
-# Terminal 1: Start the assistant
-chmod +x run_with_audio.sh
-./run_with_audio.sh
+# Pull latest changes first
+git pull
 
-# Terminal 2 (in another SSH session): Record audio
+# Use the guaranteed recording script
+chmod +x run_with_recording.sh
+./run_with_recording.sh
+```
+
+This script will:
+- ✅ Set up xvfb (virtual display)
+- ✅ Configure PulseAudio
+- ✅ Force visible mode (not headless) for audio support
+- ✅ Automatically record audio to a WAV file
+- ✅ Save audio as `voice_assistant_YYYYMMDD_HHMMSS.wav`
+
+**After running, download the audio file:**
+```bash
+# From your Windows machine:
+scp ubuntu@37.187.222.168:~/somethingds/voice_assistant_*.wav .
+```
+
+#### Alternative: Manual Method
+
+```bash
+# Terminal 1: Start assistant with visible mode
+xvfb-run -a python talk.py --visible --record
+
+# Terminal 2: Record audio separately
 chmod +x record_audio.sh
 ./record_audio.sh
-# Or manually:
-parecord --file-format=wav voice_output.wav
-
-# Download the file to listen:
-# From your local machine:
-scp ubuntu@your-server:~/somethingds/voice_output.wav .
 ```
-
-#### Option 2: Use Helper Script
-
-```bash
-chmod +x run_with_audio.sh
-./run_with_audio.sh
-```
-
-The script sets up PulseAudio and xvfb. Audio will play on the server's virtual audio device.
 
 ### Command-line options
 
