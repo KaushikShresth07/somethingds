@@ -32,22 +32,30 @@ HEADLESS = True  # Set to False for debugging
 
 
 class VoiceAssistant:
-    def __init__(self, headless=None, minimize_window=True):
+    def __init__(self, headless=None, minimize_window=True, record_audio=False):
+        # Check if DISPLAY is set (indicates xvfb or X server available)
+        has_display = os.environ.get('DISPLAY') is not None
+        
         # Auto-detect best mode for audio support
         if headless is None:
             # On Windows, use visible but minimized for audio
-            # On Linux, try headless with virtual display support
             if IS_WINDOWS:
                 self.headless = False  # Visible mode for audio on Windows
                 self.minimize_window = minimize_window
-            else:
-                # On Linux, use visible mode with xvfb for audio support
-                # xvfb provides a virtual display, so we can use visible mode
+            elif IS_LINUX and has_display:
+                # On Linux with DISPLAY set (xvfb), use visible mode for audio
                 self.headless = False  # Use visible mode with xvfb for audio
+                self.minimize_window = False
+            else:
+                # On Linux without display, use headless
+                self.headless = True
                 self.minimize_window = False
         else:
             self.headless = headless
             self.minimize_window = minimize_window and not headless
+        
+        self.record_audio = record_audio
+        self.audio_file = None
         
         self.browser = None
         self.page = None
@@ -128,15 +136,80 @@ class VoiceAssistant:
             except Exception:
                 pass  # If minimization fails, continue anyway
         
-        # Inject script to ensure audio context is created
-        await self.page.add_init_script("""
+        # Inject script to ensure audio context is created and set up audio recording
+        audio_recording_script = """
             // Ensure audio context is available
             window.AudioContext = window.AudioContext || window.webkitAudioContext;
             // Grant media permissions
             navigator.mediaDevices.getUserMedia = navigator.mediaDevices.getUserMedia || 
                 navigator.mediaDevices.webkitGetUserMedia ||
                 navigator.mediaDevices.mozGetUserMedia;
-        """)
+            
+            // Set up audio recording if needed
+            window.audioChunks = [];
+            window.mediaRecorder = null;
+            window.audioStream = null;
+            
+            // Function to start recording audio from the page
+            window.startAudioRecording = async function() {
+                try {
+                    // Create audio context
+                    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    
+                    // Get all audio elements on the page
+                    const audioElements = document.querySelectorAll('audio, video');
+                    
+                    if (audioElements.length > 0) {
+                        // Create a MediaStreamDestination to capture audio
+                        const destination = audioContext.createMediaStreamDestination();
+                        
+                        // Connect audio elements to destination
+                        for (let el of audioElements) {
+                            if (el.srcObject) {
+                                const source = audioContext.createMediaStreamSource(el.srcObject);
+                                source.connect(destination);
+                            }
+                        }
+                        
+                        // Start MediaRecorder
+                        const stream = destination.stream;
+                        window.mediaRecorder = new MediaRecorder(stream);
+                        window.audioChunks = [];
+                        
+                        window.mediaRecorder.ondataavailable = (event) => {
+                            if (event.data.size > 0) {
+                                window.audioChunks.push(event.data);
+                            }
+                        };
+                        
+                        window.mediaRecorder.onstop = () => {
+                            const blob = new Blob(window.audioChunks, { type: 'audio/wav' });
+                            console.log('Audio recording stopped, size:', blob.size);
+                        };
+                        
+                        window.mediaRecorder.start();
+                        console.log('Audio recording started');
+                        return true;
+                    }
+                    return false;
+                } catch (error) {
+                    console.error('Error starting audio recording:', error);
+                    return false;
+                }
+            };
+            
+            // Monitor for audio elements and start recording when they appear
+            const observer = new MutationObserver(() => {
+                const audioElements = document.querySelectorAll('audio, video');
+                if (audioElements.length > 0 && !window.mediaRecorder) {
+                    setTimeout(() => window.startAudioRecording(), 2000);
+                }
+            });
+            
+            observer.observe(document.body, { childList: true, subtree: true });
+        """
+        
+        await self.page.add_init_script(audio_recording_script)
         
         # Listen for console messages
         self.page.on("console", self.handle_console)
@@ -268,10 +341,26 @@ class VoiceAssistant:
     async def keep_alive(self):
         """Keep the browser alive and monitor the session."""
         console.print("[green]✓ Voice assistant is active![/green]")
+        
+        # Start audio recording if requested
+        if self.record_audio:
+            try:
+                recording_started = await self.page.evaluate("window.startAudioRecording()")
+                if recording_started:
+                    console.print("[green]🔊 Audio recording started[/green]")
+                    self.audio_file = f"voice_output_{int(asyncio.get_event_loop().time())}.wav"
+            except Exception as e:
+                console.print(f"[yellow]Could not start audio recording: {e}[/yellow]")
+        
         if self.headless and IS_LINUX:
-            console.print("[yellow]⚠ Note: For audio on Linux server, use: xvfb-run -a python talk.py[/yellow]")
-        elif not self.headless and IS_WINDOWS and self.minimize_window:
-            console.print("[dim]Browser window is minimized - audio is active[/dim]")
+            console.print("[yellow]⚠ Note: Audio may not work in headless mode[/yellow]")
+            console.print("[yellow]   Use: xvfb-run -a python talk.py --visible --record[/yellow]")
+        elif not self.headless:
+            if IS_WINDOWS and self.minimize_window:
+                console.print("[dim]Browser window is minimized - audio is active[/dim]")
+            else:
+                console.print("[green]Browser is visible - audio should be working[/green]")
+        
         console.print("[dim]Press Ctrl+C to disconnect[/dim]")
         
         try:
@@ -319,6 +408,37 @@ class VoiceAssistant:
         """Clean up resources."""
         console.print("[cyan]Cleaning up...[/cyan]")
         try:
+            # Stop audio recording if active
+            if self.record_audio:
+                try:
+                    audio_data = await self.page.evaluate("""
+                        async () => {
+                            if (window.mediaRecorder && window.mediaRecorder.state !== 'inactive') {
+                                return new Promise((resolve) => {
+                                    window.mediaRecorder.onstop = () => {
+                                        const blob = new Blob(window.audioChunks, { type: 'audio/wav' });
+                                        const reader = new FileReader();
+                                        reader.onloadend = () => {
+                                            resolve(reader.result);
+                                        };
+                                        reader.readAsDataURL(blob);
+                                    };
+                                    window.mediaRecorder.stop();
+                                });
+                            }
+                            return null;
+                        }
+                    """)
+                    if audio_data:
+                        # Save audio file
+                        import base64
+                        audio_bytes = base64.b64decode(audio_data.split(',')[1])
+                        with open(self.audio_file, 'wb') as f:
+                            f.write(audio_bytes)
+                        console.print(f"[green]✓ Audio saved to: {self.audio_file}[/green]")
+                except Exception as e:
+                    console.print(f"[yellow]Could not save audio: {e}[/yellow]")
+            
             if self.browser:
                 await self.browser.close()
             if self.playwright:
@@ -383,6 +503,11 @@ Examples:
         action="store_true",
         help="Don't minimize browser window (Windows only)"
     )
+    parser.add_argument(
+        "--record",
+        action="store_true",
+        help="Record audio to file (saves as voice_output_*.wav)"
+    )
     
     args = parser.parse_args()
     
@@ -396,20 +521,29 @@ Examples:
     
     minimize_window = not args.no_minimize
     
+    # Check if DISPLAY is available
+    has_display = os.environ.get('DISPLAY') is not None
+    
     # Show mode info
     if headless is None:
         if IS_WINDOWS:
             console.print("[cyan]Windows detected: Using visible mode (minimized) for audio support[/cyan]")
         elif IS_LINUX:
-            console.print("[cyan]Linux detected: Using headless mode[/cyan]")
-            console.print("[yellow]For audio on Linux, use: xvfb-run -a python talk.py[/yellow]")
+            if has_display:
+                console.print("[cyan]Linux detected: DISPLAY available, using visible mode for audio[/cyan]")
+            else:
+                console.print("[cyan]Linux detected: No DISPLAY, using headless mode[/cyan]")
+                console.print("[yellow]For audio on Linux, use: xvfb-run -a python talk.py --visible --record[/yellow]")
     elif headless:
         console.print("[yellow]⚠ Headless mode: Audio may not work[/yellow]")
     else:
         console.print("[green]Visible mode: Audio should work[/green]")
     
+    if args.record:
+        console.print("[green]🔊 Audio recording enabled[/green]")
+    
     # Create and run the assistant
-    assistant = VoiceAssistant(headless=headless, minimize_window=minimize_window)
+    assistant = VoiceAssistant(headless=headless, minimize_window=minimize_window, record_audio=args.record)
     
     try:
         asyncio.run(assistant.run())

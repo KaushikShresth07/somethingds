@@ -39,5 +39,6 @@ echo "  (or use ./record_audio.sh)"
 echo ""
 
 # Run with virtual display and visible mode for better audio support
-DISPLAY=:99 xvfb-run -a -s "-screen 0 1920x1080x24" python talk.py "$@"
+# Force visible mode and enable audio recording
+DISPLAY=:99 xvfb-run -a -s "-screen 0 1920x1080x24" python talk.py --visible --record "$@"
 
