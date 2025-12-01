@@ -199,14 +199,20 @@ class VoiceAssistant:
             };
             
             // Monitor for audio elements and start recording when they appear
-            const observer = new MutationObserver(() => {
-                const audioElements = document.querySelectorAll('audio, video');
-                if (audioElements.length > 0 && !window.mediaRecorder) {
-                    setTimeout(() => window.startAudioRecording(), 2000);
+            function setupObserver() {
+                if (document.body) {
+                    const observer = new MutationObserver(() => {
+                        const audioElements = document.querySelectorAll('audio, video');
+                        if (audioElements.length > 0 && !window.mediaRecorder) {
+                            setTimeout(() => window.startAudioRecording(), 2000);
+                        }
+                    });
+                    observer.observe(document.body, { childList: true, subtree: true });
+                } else {
+                    setTimeout(setupObserver, 100);
                 }
-            });
-            
-            observer.observe(document.body, { childList: true, subtree: true });
+            }
+            setupObserver();
         """
         
         await self.page.add_init_script(audio_recording_script)
