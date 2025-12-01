@@ -319,19 +319,38 @@ class VoiceAssistant:
         console.print("[cyan]Monitoring connection status...[/cyan]")
         
         # Wait for connection indicators
-        max_wait = 30  # seconds
+        max_wait = 60  # seconds - increased timeout
         start_time = asyncio.get_event_loop().time()
+        connecting_count = 0
         
         while (asyncio.get_event_loop().time() - start_time) < max_wait:
             try:
                 # Check for connection status in the page
-                # Look for text like "connecting", "connected", etc.
                 page_text = await self.page.content()
                 
-                if "connecting" in page_text.lower():
-                    console.print("[yellow]🔄 Connecting...[/yellow]")
-                elif "connected" in page_text.lower():
+                # Also check for WebRTC/audio elements
+                has_audio_elements = await self.page.evaluate("""
+                    () => {
+                        const audioElements = document.querySelectorAll('audio, video');
+                        const hasActiveAudio = Array.from(audioElements).some(el => 
+                            !el.paused && el.currentTime > 0
+                        );
+                        return {
+                            count: audioElements.length,
+                            hasActive: hasActiveAudio,
+                            hasSrcObject: Array.from(audioElements).some(el => el.srcObject)
+                        };
+                    }
+                """)
+                
+                if "connecting" in page_text.lower() or connecting_count < 5:
+                    if connecting_count % 3 == 0:  # Print every 3 seconds
+                        console.print("[yellow]🔄 Connecting...[/yellow]")
+                    connecting_count += 1
+                elif "connected" in page_text.lower() or has_audio_elements['hasActive']:
                     console.print("[green]✓ Connected![/green]")
+                    if has_audio_elements['count'] > 0:
+                        console.print(f"[green]  Found {has_audio_elements['count']} audio element(s)[/green]")
                     self.connected = True
                     break
                 
@@ -342,6 +361,7 @@ class VoiceAssistant:
         
         if not self.connected:
             console.print("[yellow]⚠ Connection status unclear, but continuing...[/yellow]")
+            console.print("[yellow]  Audio may still work even if connection status is unclear[/yellow]")
             self.connected = True  # Assume connected if we can't determine
 
     async def keep_alive(self):
